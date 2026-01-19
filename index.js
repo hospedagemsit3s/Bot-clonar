@@ -5,9 +5,17 @@ const {
     ButtonBuilder, 
     ButtonStyle, 
     EmbedBuilder, 
-    PermissionFlagsBits 
+    PermissionFlagsBits,
+    ChannelType
 } = require('discord.js');
+const http = require('http');
 require('dotenv').config();
+
+// Servidor HTTP para a Render
+http.createServer((req, res) => {
+    res.write("Bot Online!");
+    res.end();
+}).listen(process.env.PORT || 3000);
 
 const client = new Client({
     intents: [
@@ -19,7 +27,7 @@ const client = new Client({
     ]
 });
 
-const PREFIX = '!'; // Prefixo para comandos
+const PREFIX = '!';
 
 client.once('ready', () => {
     console.log(`Bot logado como ${client.user.tag}!`);
@@ -64,7 +72,6 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// Estado temporário para as seleções do usuário
 const userSelections = new Map();
 
 client.on('interactionCreate', async (interaction) => {
@@ -81,25 +88,25 @@ client.on('interactionCreate', async (interaction) => {
     const selections = userSelections.get(userId);
 
     if (interaction.customId === 'continue') {
-        await interaction.reply({ content: 'Por favor, envie o ID do servidor de ORIGEM (de onde vou copiar as coisas):', ephemeral: true });
+        await interaction.reply({ content: 'Por favor, envie o ID do servidor de ORIGEM:', ephemeral: true });
         
         const filter = m => m.author.id === userId;
-        const collector = interaction.channel.createMessageCollector({ filter, time: 30000, max: 1 });
+        const collector = interaction.channel.createMessageCollector({ filter, time: 60000, max: 1 });
 
         collector.on('collect', async m => {
             const sourceGuildId = m.content.trim();
             const sourceGuild = client.guilds.cache.get(sourceGuildId);
 
             if (!sourceGuild) {
-                return interaction.followUp({ content: 'Não consegui encontrar esse servidor. Verifique se eu estou nele!', ephemeral: true });
+                return interaction.followUp({ content: 'Não encontrei o servidor de origem. Verifique se eu estou nele!', ephemeral: true });
             }
 
-            await interaction.followUp({ content: 'Iniciando processo... Isso pode demorar um pouco.', ephemeral: true });
+            await interaction.followUp({ content: '🚀 Iniciando clonagem completa...', ephemeral: true });
             
             try {
                 const targetGuild = interaction.guild;
 
-                // Lógica de Apagar
+                // 1. APAGAR
                 if (selections.del_channels) {
                     const channels = await targetGuild.channels.fetch();
                     for (const channel of channels.values()) {
@@ -110,7 +117,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (selections.del_roles) {
                     const roles = await targetGuild.roles.fetch();
                     for (const role of roles.values()) {
-                        if (role.editable && role.name !== '@everyone') {
+                        if (role.editable && role.name !== '@everyone' && !role.managed) {
                             try { await role.delete(); } catch (e) {}
                         }
                     }
@@ -123,37 +130,75 @@ client.on('interactionCreate', async (interaction) => {
                     }
                 }
 
-                // Lógica de Clonar
+                // 2. CLONAR CARGOS (E mapear IDs)
+                const roleMap = new Map();
                 if (selections.clone_roles) {
                     const roles = await sourceGuild.roles.fetch();
-                    const sortedRoles = roles.sort((a, b) => a.position - b.position);
-                    for (const role of sortedRoles.values()) {
-                        if (role.name !== '@everyone' && !role.managed) {
-                            await targetGuild.roles.create({
+                    const sortedRoles = Array.from(roles.values()).sort((a, b) => a.position - b.position);
+                    
+                    for (const role of sortedRoles) {
+                        if (role.name === '@everyone') {
+                            await targetGuild.roles.everyone.setPermissions(role.permissions);
+                            roleMap.set(role.id, targetGuild.roles.everyone.id);
+                            continue;
+                        }
+                        if (!role.managed) {
+                            const newRole = await targetGuild.roles.create({
                                 name: role.name,
                                 color: role.color,
                                 permissions: role.permissions,
                                 hoist: role.hoist,
                                 mentionable: role.mentionable
                             });
+                            roleMap.set(role.id, newRole.id);
                         }
                     }
                 }
 
+                // 3. CLONAR CANAIS (Categorias primeiro, depois canais)
                 if (selections.clone_channels) {
-                    const channels = await sourceGuild.channels.fetch();
-                    // Simplificado: cria apenas canais de texto e voz básicos
-                    for (const channel of channels.values()) {
-                        if (channel.type === 0 || channel.type === 2 || channel.type === 4) { // Text, Voice, Category
+                    const sourceChannels = await sourceGuild.channels.fetch();
+                    const categoryMap = new Map();
+
+                    // Primeiro: Categorias
+                    const categories = sourceChannels.filter(c => c.type === ChannelType.GuildCategory);
+                    for (const cat of categories.values()) {
+                        const newCat = await targetGuild.channels.create({
+                            name: cat.name,
+                            type: ChannelType.GuildCategory,
+                            permissionOverwrites: cat.permissionOverwrites.cache.map(ov => ({
+                                id: roleMap.get(ov.id) || ov.id,
+                                allow: ov.allow,
+                                deny: ov.deny,
+                                type: ov.type
+                            }))
+                        });
+                        categoryMap.set(cat.id, newCat.id);
+                    }
+
+                    // Segundo: Canais de Texto e Voz
+                    const otherChannels = sourceChannels.filter(c => c.type !== ChannelType.GuildCategory);
+                    for (const chan of otherChannels.values()) {
+                        if ([ChannelType.GuildText, ChannelType.GuildVoice, ChannelType.GuildAnnouncement].includes(chan.type)) {
                             await targetGuild.channels.create({
-                                name: channel.name,
-                                type: channel.type,
-                                parent: channel.parentId // Isso precisaria de um mapeamento de IDs para funcionar 100% perfeito
+                                name: chan.name,
+                                type: chan.type,
+                                parent: categoryMap.get(chan.parentId),
+                                nsfw: chan.nsfw,
+                                topic: chan.topic,
+                                rateLimitPerUser: chan.rateLimitPerUser,
+                                permissionOverwrites: chan.permissionOverwrites.cache.map(ov => ({
+                                    id: roleMap.get(ov.id) || ov.id,
+                                    allow: ov.allow,
+                                    deny: ov.deny,
+                                    type: ov.type
+                                }))
                             });
                         }
                     }
                 }
 
+                // 4. CLONAR EMOJIS
                 if (selections.clone_emojis) {
                     const emojis = await sourceGuild.emojis.fetch();
                     for (const emoji of emojis.values()) {
@@ -161,31 +206,28 @@ client.on('interactionCreate', async (interaction) => {
                     }
                 }
 
-                await interaction.followUp({ content: '✅ Processo concluído com sucesso!', ephemeral: true });
+                await interaction.followUp({ content: '✅ Clonagem completa realizada com sucesso!', ephemeral: true });
             } catch (error) {
                 console.error(error);
-                await interaction.followUp({ content: '❌ Ocorreu um erro durante a clonagem.', ephemeral: true });
+                await interaction.followUp({ content: '❌ Erro na clonagem. Verifique minhas permissões!', ephemeral: true });
             }
         });
-
-        return;
-    }
-
-    // Alternar estado dos botões
-    selections[interaction.customId] = !selections[interaction.customId];
-    
-    // Atualizar cores dos botões para dar feedback visual
-    const rows = interaction.message.components.map(row => {
-        const newRow = ActionRowBuilder.from(row);
-        newRow.components.forEach(button => {
-            if (button.data.custom_id === interaction.customId) {
-                button.setStyle(selections[interaction.customId] ? ButtonStyle.Primary : ButtonStyle.Secondary);
-            }
-        });
-        return newRow;
     });
 
-    await interaction.update({ components: rows });
+    // Alternar estado dos botões
+    if (interaction.customId !== 'continue') {
+        selections[interaction.customId] = !selections[interaction.customId];
+        const rows = interaction.message.components.map(row => {
+            const newRow = ActionRowBuilder.from(row);
+            newRow.components.forEach(button => {
+                if (button.data.custom_id === interaction.customId) {
+                    button.setStyle(selections[interaction.customId] ? ButtonStyle.Primary : ButtonStyle.Secondary);
+                }
+            });
+            return newRow;
+        });
+        await interaction.update({ components: rows });
+    }
 });
 
 client.login(process.env.TOKEN);
