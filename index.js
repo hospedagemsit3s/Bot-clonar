@@ -8,11 +8,11 @@ const {
     PermissionFlagsBits,
     ChannelType
 } = require('discord.js');
-const http = require('http');
+const http = require('http' );
 require('dotenv').config();
 
 // Servidor HTTP para a Render
-http.createServer((req, res) => {
+http.createServer((req, res ) => {
     res.write("Bot Online!");
     res.end();
 }).listen(process.env.PORT || 3000);
@@ -130,7 +130,7 @@ client.on('interactionCreate', async (interaction) => {
                     }
                 }
 
-                // 2. CLONAR CARGOS (E mapear IDs)
+                // 2. CLONAR CARGOS
                 const roleMap = new Map();
                 if (selections.clone_roles) {
                     const roles = await sourceGuild.roles.fetch();
@@ -155,12 +155,11 @@ client.on('interactionCreate', async (interaction) => {
                     }
                 }
 
-                // 3. CLONAR CANAIS (Categorias primeiro, depois canais)
+                // 3. CLONAR CANAIS
                 if (selections.clone_channels) {
                     const sourceChannels = await sourceGuild.channels.fetch();
                     const categoryMap = new Map();
 
-                    // Primeiro: Categorias
                     const categories = sourceChannels.filter(c => c.type === ChannelType.GuildCategory);
                     for (const cat of categories.values()) {
                         const newCat = await targetGuild.channels.create({
@@ -176,7 +175,6 @@ client.on('interactionCreate', async (interaction) => {
                         categoryMap.set(cat.id, newCat.id);
                     }
 
-                    // Segundo: Canais de Texto e Voz
                     const otherChannels = sourceChannels.filter(c => c.type !== ChannelType.GuildCategory);
                     for (const chan of otherChannels.values()) {
                         if ([ChannelType.GuildText, ChannelType.GuildVoice, ChannelType.GuildAnnouncement].includes(chan.type)) {
@@ -212,22 +210,21 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.followUp({ content: '❌ Erro na clonagem. Verifique minhas permissões!', ephemeral: true });
             }
         });
-    });
+        return; // Importante para não executar o código de alternar botões abaixo
+    }
 
     // Alternar estado dos botões
-    if (interaction.customId !== 'continue') {
-        selections[interaction.customId] = !selections[interaction.customId];
-        const rows = interaction.message.components.map(row => {
-            const newRow = ActionRowBuilder.from(row);
-            newRow.components.forEach(button => {
-                if (button.data.custom_id === interaction.customId) {
-                    button.setStyle(selections[interaction.customId] ? ButtonStyle.Primary : ButtonStyle.Secondary);
-                }
-            });
-            return newRow;
+    selections[interaction.customId] = !selections[interaction.customId];
+    const rows = interaction.message.components.map(row => {
+        const newRow = ActionRowBuilder.from(row);
+        newRow.components.forEach(button => {
+            if (button.data.custom_id === interaction.customId) {
+                button.setStyle(selections[interaction.customId] ? ButtonStyle.Primary : ButtonStyle.Secondary);
+            }
         });
-        await interaction.update({ components: rows });
-    }
+        return newRow;
+    });
+    await interaction.update({ components: rows });
 });
 
 client.login(process.env.TOKEN);
