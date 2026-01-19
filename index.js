@@ -29,7 +29,7 @@ const client = new Client({
 });
 
 const PREFIX = '!';
-const OWNER_ID = 'SEU_ID_AQUI'; // Coloque seu ID do Discord aqui para ser o dono
+const OWNER_ID = '1225647692458229860'; // Coloque seu ID do Discord aqui para ser o dono
 let vips = new Set(); // Lista de IDs de usuários VIP
 
 client.once('ready', () => {
