@@ -8,11 +8,11 @@ const {
     PermissionFlagsBits,
     ChannelType
 } = require('discord.js');
-const http = require('http' );
+const http = require('http');
 require('dotenv').config();
 
 // Servidor HTTP para a Render
-http.createServer((req, res ) => {
+http.createServer((req, res) => {
     res.write("Bot Online!");
     res.end();
 }).listen(process.env.PORT || 3000);
@@ -101,7 +101,7 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.followUp({ content: 'Não encontrei o servidor de origem. Verifique se eu estou nele!', ephemeral: true });
             }
 
-            await interaction.followUp({ content: '🚀 Iniciando clonagem completa...', ephemeral: true });
+            await interaction.followUp({ content: '🚀 Iniciando clonagem organizada...', ephemeral: true });
             
             try {
                 const targetGuild = interaction.guild;
@@ -130,7 +130,7 @@ client.on('interactionCreate', async (interaction) => {
                     }
                 }
 
-                // 2. CLONAR CARGOS
+                // 2. CLONAR CARGOS (Ordenados)
                 const roleMap = new Map();
                 if (selections.clone_roles) {
                     const roles = await sourceGuild.roles.fetch();
@@ -148,23 +148,28 @@ client.on('interactionCreate', async (interaction) => {
                                 color: role.color,
                                 permissions: role.permissions,
                                 hoist: role.hoist,
-                                mentionable: role.mentionable
+                                mentionable: role.mentionable,
+                                position: role.position
                             });
                             roleMap.set(role.id, newRole.id);
                         }
                     }
                 }
 
-                // 3. CLONAR CANAIS
+                // 3. CLONAR CANAIS (Ordenados por categoria e posição)
                 if (selections.clone_channels) {
                     const sourceChannels = await sourceGuild.channels.fetch();
                     const categoryMap = new Map();
 
-                    const categories = sourceChannels.filter(c => c.type === ChannelType.GuildCategory);
-                    for (const cat of categories.values()) {
+                    // Primeiro: Categorias ordenadas
+                    const categories = Array.from(sourceChannels.filter(c => c.type === ChannelType.GuildCategory).values())
+                        .sort((a, b) => a.position - b.position);
+
+                    for (const cat of categories) {
                         const newCat = await targetGuild.channels.create({
                             name: cat.name,
                             type: ChannelType.GuildCategory,
+                            position: cat.position,
                             permissionOverwrites: cat.permissionOverwrites.cache.map(ov => ({
                                 id: roleMap.get(ov.id) || ov.id,
                                 allow: ov.allow,
@@ -175,12 +180,16 @@ client.on('interactionCreate', async (interaction) => {
                         categoryMap.set(cat.id, newCat.id);
                     }
 
-                    const otherChannels = sourceChannels.filter(c => c.type !== ChannelType.GuildCategory);
-                    for (const chan of otherChannels.values()) {
+                    // Segundo: Canais ordenados
+                    const otherChannels = Array.from(sourceChannels.filter(c => c.type !== ChannelType.GuildCategory).values())
+                        .sort((a, b) => a.position - b.position);
+
+                    for (const chan of otherChannels) {
                         if ([ChannelType.GuildText, ChannelType.GuildVoice, ChannelType.GuildAnnouncement].includes(chan.type)) {
                             await targetGuild.channels.create({
                                 name: chan.name,
                                 type: chan.type,
+                                position: chan.position,
                                 parent: categoryMap.get(chan.parentId),
                                 nsfw: chan.nsfw,
                                 topic: chan.topic,
@@ -204,13 +213,13 @@ client.on('interactionCreate', async (interaction) => {
                     }
                 }
 
-                await interaction.followUp({ content: '✅ Clonagem completa realizada com sucesso!', ephemeral: true });
+                await interaction.followUp({ content: '✅ Clonagem completa e organizada realizada com sucesso!', ephemeral: true });
             } catch (error) {
                 console.error(error);
                 await interaction.followUp({ content: '❌ Erro na clonagem. Verifique minhas permissões!', ephemeral: true });
             }
         });
-        return; // Importante para não executar o código de alternar botões abaixo
+        return;
     }
 
     // Alternar estado dos botões
